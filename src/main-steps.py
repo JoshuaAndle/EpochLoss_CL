@@ -55,8 +55,7 @@ FLAGS.add_argument('--modifier_string', type=str, default='None,None,None,None,N
 FLAGS.add_argument('--preprocess', choices=['Normalized', 'Unnormalized'], default='Unnormalized', help='Determines if the data is ranged 0:1 unnormalized or not (normalized')
 
 FLAGS.add_argument('--attack_type', choices=['None', 'PGD', 'AutoAttack', 'gaussian_noise', 'impulse_noise', 'gaussian_blur', 'spatter', 'saturate', 'rotate'], default='PGD', help='What type of perturbation is applied')
-FLAGS.add_argument('--removal_metric',  type=str , default='Random', choices=['Caper', 'Random', 'NoRemoval', 
-                                                            'EpochAcc'], help='which metric to use for removing training samples')
+FLAGS.add_argument('--removal_metric',  type=str , default='Random', choices=['Caper', 'Random', 'NoRemoval', 'EpochAcc'], help='which metric to use for removing training samples')
 FLAGS.add_argument('--trial_num', type=int , default=1, help='Trial number for setting manual seed')
 
 
@@ -70,7 +69,6 @@ FLAGS.add_argument('--lr', type=float, default=0.1, help='Learning rate')
 FLAGS.add_argument('--lr_min', type=float, default=0.001, help='Minimum learning rate below which training is stopped early')
 FLAGS.add_argument('--lr_patience', type=int, default=5, help='Patience term to dictate when Learning rate is decreased during training')
 FLAGS.add_argument('--lr_factor', type=float, default=0.1, help='Factor by which to reduce learning rate during training')
-FLAGS.add_argument('--Gamma', type=float, default=0.2)   
 
 # Pruning options.
 ### Note: We only use structured pruning for now. May try unstructured pruning as well unless it causes issues with CL weight sharing, but it likely shouldnt. 
@@ -81,21 +79,17 @@ FLAGS.add_argument('--finetune_epochs', type=int, default=2, help='Number of epo
 
 
 ### Data Removal Options
-FLAGS.add_argument('--set_size', type=int , default=10, help='Size of sets for certain removal metrics')
-FLAGS.add_argument('--num_sets', type=int , default=1, help='number of sets to be removed')
 FLAGS.add_argument('--normalize',  type=str, default='mean_std', choices=['none', 'mean_std', 'min_max'], help='which normalizing method use for normalization')
-FLAGS.add_argument('--setSorting', choices=['sorted', 'fixed', 'random'], default='random', help='How to order the set data prior to removal, sorted by label, shuffled, or fixed')
 FLAGS.add_argument('--tau',     type=int,   default=50, help='Tau')
-FLAGS.add_argument('--sortOrder', choices=['ascending', 'descending'], default='descending', help='dictates sort order for various removal methods')
+FLAGS.add_argument('--sort_order', choices=['ascending', 'descending'], default='descending', help='dictates sort order for various removal methods')
 # Caper-specific Options
 FLAGS.add_argument('--caper_epsilon',       type=float, default=0.)
-FLAGS.add_argument('--Window',              type=str,   default='final')
-FLAGS.add_argument('--sample_percentage',   type=float, default=0.0)
-FLAGS.add_argument('--classRemovalAllowance', type=int ,  default=100)
+FLAGS.add_argument('--Window',              type=str, choices=['final', ''],   default='final')
+FLAGS.add_argument('--removal_percentage',   type=float, default=0.0)
 # EpochAcc Options
-FLAGS.add_argument('--EpochAccMetric', choices=['loss', 'softmax'], default='softmax', help='How to assess performance on training data for EpochAcc removal method')
-FLAGS.add_argument('--EpochAccEpochs', type=int, default=-1, help='How many epochs to consider when calculating metric')
-FLAGS.add_argument('--EpochAccInterval', type=int, default=1, help='Consider metric averaged for every Nth epoch')
+FLAGS.add_argument('--epoch_loss_metric', choices=['loss', 'softmax'], default='softmax', help='How to assess performance on training data for EpochAcc removal method')
+FLAGS.add_argument('--epoch_loss_epochs', type=int, default=0, help='Consider first N epochs when calculating metric')
+FLAGS.add_argument('--epoch_loss_interval', type=int, default=1, help='Consider given metric averaged for every Nth epoch')
 
 
 ### Generally unchanged hyperparameters
@@ -111,7 +105,6 @@ def main():
     args = FLAGS.parse_args()
    
 
-    args.modifier_list = args.modifier_string.split(',')
     random.seed(args.trial_num)
     np.random.seed(args.trial_num)
     torch.manual_seed(args.trial_num)
@@ -122,16 +115,24 @@ def main():
     torch.backends.cudnn.deterministic = True
     torch.cuda.set_device(0)
 
-    # if args.sample_percentage == 0:
-    #     args.sample_percentage = args.set_size * args.num_sets
-    
+
+
+    args.modifier_list = args.modifier_string.split(',')
+    num_classes_by_task = utils.get_numclasses(args.dataset)
+
     print('Arguments =')
     for arg in vars(args):
         print('\t'+arg+':',getattr(args,arg))
     print('-'*100, flush=True)   
 
-    num_classes_by_task = utils.get_numclasses(args.dataset, modifier=args.modifier_list[args.task_num])
-    taskid = args.task_num
+
+
+    ### Early Termination Checks
+    utils.early_termination(args)
+    
+
+
+
 
 
     ###################
@@ -141,10 +142,12 @@ def main():
     args.save_prefix, loadpath = utils.load_task_paths(args)
     loadpath, ckpt = utils.load_task_checkpoint(args, loadpath)
 
+    #!# Leaving in incase we want to expand to doing alternative task orders
+    taskid = args.task_num
     manager = Manager(args, ckpt, first_task_classnum=num_classes_by_task[taskid])
     
-    if args.pretrained and args.task_num==0:
-        #*# Load a compatible version of the pretrained weights
+    if args.pretrained and taskid==0:
+        ### Load a compatible version of the pretrained weights prior to first task
         pretrained_dict = utils.load_pretrained(args, manager)
         manager.network.model.load_state_dict(pretrained_dict, strict=False)
 
@@ -157,13 +160,8 @@ def main():
     ###################
     ##### Setup task and data
     ###################
-
-    ### Logic for looping over remaining tasks
-    taskid = args.task_num
     
     ### Update paths as needed for each new task
-    #!# Moved into the utils path functions
-    # args.save_prefix = os.path.join(args.save_prefix, (str(taskid)+"_"+args.removal_metric))
     print("Task ID: ", taskid, " #", args.task_num, " in sequence for dataset: ", args.dataset)
     print('\n\n args.save_prefix  is ', args.save_prefix, "\n\n", flush=True)
     os.makedirs(args.save_prefix, exist_ok = True)
@@ -174,14 +172,11 @@ def main():
     print("Finetuned path: ", finetuned_path, flush=True)
 
     ### Prepare dataloaders for new task
-    ### Note: For some datasets we just use the test data for the val dataset or vice versa
+    ### Note: extra_loader is a non-shuffled version of train dataloader used when removing data
     train_data_loader = utils.get_dataloader(args.dataset, args.batch_size, pin_memory=args.cuda, task_num=taskid, set="train", preprocess=args.preprocess, shuffle=True, modifier=args.modifier_list[args.task_num])
     val_data_loader  =  utils.get_dataloader(args.dataset, args.batch_size, pin_memory=args.cuda, task_num=taskid, set="valid", preprocess=args.preprocess, modifier=args.modifier_list[args.task_num])
     extra_data_loader =  utils.get_dataloader(args.dataset, args.batch_size, pin_memory=args.cuda, task_num=taskid, set="train", preprocess=args.preprocess, modifier=args.modifier_list[args.task_num])
     manager.train_loader, manager.val_loader, manager.extra_loader = train_data_loader, val_data_loader, extra_data_loader
-
-    total_images = sum(len(batch[0]) for batch in manager.extra_loader)
-    print('\n\n number of extra samples :', total_images, flush=True)
 
     if args.dataset == "MPC":
         dataset = cldatasets.get_mixedCIFAR_PMNIST(task_num=args.task_num, split = 'train', preprocess=args.preprocess, modifier=args.modifier_list[args.task_num])
@@ -193,27 +188,20 @@ def main():
     elif args.dataset in ["ADM", "BigGAN", "Midjourney", "glide", "stable_diffusion_v_1_4", "VQDM"]:
         dataset = cldatasets.get_Synthetic_SingleGenerator(task_num=args.task_num, split = 'train', generator = args.dataset, modifier=args.modifier_list[args.task_num], preprocess=args.preprocess)
 
-    ### Initialize the z (unique sample ID) values of the dataset before changing anything
+    ### Initialize the z (unique sample ID for tracking) values of the dataset before changing anything
     dataset['z'] = torch.arange(len(dataset['y']))
 
-    #*# Previously the dataset passed in would be shuffled, affecting the original copy. Fixed by passing in a copy
-    ### Note: Because the shuffling mode was restricted to not changing the order of samples, this didn't actually break anything up to this point
-    all_batches = utils.prepare_allbatches(set_size=args.set_size, dataset=copy.deepcopy(dataset))
-    manager.hsic_dataset = all_batches
+    all_batches = utils.prepare_allbatches(set_size=1, dataset=copy.deepcopy(dataset))
+    manager.dataset = all_batches
     
 
-    if args.sample_percentage < 0.01:
-        total_images = sum(len(batch[0]) for batch in manager.train_loader)
-        print('\n\n number of train samples :', total_images, flush=True)
-        args.num_sets = round((args.num_sets * total_images)/100)
-        args.sample_percentage = args.set_size * args.num_sets
-        args.classRemovalAllowance = floor(args.sample_percentage / num_classes_by_task[taskid])
+    total_train_images = sum(len(batch[0]) for batch in manager.train_loader)
+    args.samples_to_remove = round(args.removal_percentage * total_train_images)
+    print('Samples to remove: {} of {} total training samples'.format{args.samples_to_remove, total_train_images}, flush=True)
+    args.class_removal_allowance = floor(args.samples_to_remove / num_classes_by_task[taskid])
 
-        print("\nUpdated arguments:")
-        print('args.num_sets is:', args.num_sets)
-        print('args.sample_percentage is:', args.sample_percentage)
-        print('args.classRemovalAllowance is:', args.classRemovalAllowance)
-    
+    total_extra_images = sum(len(batch[0]) for batch in manager.extra_loader)
+    print('Samples in extra_loader :', total_extra_images, flush=True)
 
 
     ### This is for producing and setting the classifier layer for a given task's # classes
@@ -236,7 +224,7 @@ def main():
         sampledict['labels'][i] = 0
         sampledict['step2_time'][i] = 0
 
-    ### Passing this to manager so that the step 1 logits can be passed back
+    ### Passing this to manager so that the step 1 logits can be passed back after epoch tau
     manager.sampledict = sampledict
 
 
@@ -244,11 +232,9 @@ def main():
     ### Reload all previously masked weights to get the full network prior to weight sharing.
     if args.task_num != 0:
         manager.prepare_task()
-    # print('checking weights for initial manager is', manager,'\n\n')
-    # manager.network.check_weights()
 
 
-    ### Changed to copy the manager after all the setup steps have been done to avoid needing to repeat them
+    ### Copy the manager and network so we can reload after epoch tau
     manager_deep_copy = copy.deepcopy(manager)
 
 
@@ -257,13 +243,12 @@ def main():
 
 
     ##################################################################################################################
-    ##### Step 1
-    #####    - train non-adversarially for tau epochs
+    ##### Step 1: Train non-adversarially for tau epochs
     ##################################################################################################################
     if args.removal_metric != "NoRemoval" and args.tau != 0:
-        print('\n\n\n', '-' * 16, '\nstep 1 is started \n', flush=True)
+        print('\n\n\n', '-' * 16, '\nStep 1 is started \n', flush=True)
 
-        trained_path = os.path.join(args.save_prefix, (args.removal_metric + "1-2_trained.pt"))
+        trained_path = os.path.join(args.save_prefix, (args.removal_metric + "_1-2_trained.pt"))
         
         manager.train(args.tau, save=False, savename=trained_path, num_class=num_classes_by_task[taskid], use_attack=False, save_best_model=True, trackpreds=True)
         # utils.save_ckpt(manager, savename=trained_path)
@@ -273,13 +258,10 @@ def main():
         sampledict['epochlogits'] = manager.sampledict['epochlogits']
         sampledict['labels'] = manager.sampledict['labels']
 
-        # print('checking weights for tau manager is', manager,'\n\n')
-        # manager.network.check_weights()
         
 
         ##################################################################################################################
-        ##### Step 2
-        #####    - remove samples predicted to reduce robustness/accuracy of model based on chosen metric
+        ##### Step 2: Remove samples predicted to reduce robustness/accuracy of model based on chosen metric
         ##################################################################################################################
 
         print("\n\n\n", '-' * 16, '\nstep 2 is started \n', flush=True)

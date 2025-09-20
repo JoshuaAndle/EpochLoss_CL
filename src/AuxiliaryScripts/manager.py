@@ -373,7 +373,7 @@ class Manager(object):
             ### These weren't tuned, just rough estimates aimed to allow convergence at each step for either training or finetuning steps
             milestones = [(2*(epochs/5)),(3*(epochs/5)),(4*(epochs/5))]
 
-            scheduler  = MultiStepLR(optimizer, milestones=milestones, gamma=self.args.Gamma) 
+            scheduler  = MultiStepLR(optimizer, milestones=milestones, gamma=self.args.lr_factor) 
         else:
             patience = self.args.lr_patience
             lrmin = self.args.lr_min
