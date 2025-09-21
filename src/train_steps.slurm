@@ -41,8 +41,8 @@ dataset="SynthDisjoint"
 # modifier_string="None,None,None,None,None,None"
 
 ### Sequential task substitution 
-modifier_string="nature,nature,nature,nature,nature,nature"
-# modifier_string="ai,nature,nature,nature,nature,nature"
+# modifier_string="nature,nature,nature,nature,nature,nature"
+modifier_string="ai,nature,nature,nature,nature,nature"
 # modifier_string="ai,ai,nature,nature,nature,nature"
 # modifier_string="ai,ai,ai,nature,nature,nature"
 # modifier_string="ai,ai,ai,ai,nature,nature"
@@ -60,15 +60,16 @@ RUN_ID="pretrained-synthetic-LfSteps"
 
 
 ### our model args
-EPOCHS=300
+# EPOCHS=300
+EPOCHS=4
 dropout_factor=0.5
 BATCH_SIZE=128
 sparsity=0.65
 
 
 # HSIC args
-# ATTACK_TYPE="None"
-ATTACK_TYPE="PGD"
+ATTACK_TYPE="None"
+# ATTACK_TYPE="PGD"
 # ATTACK_TYPE="AutoAttack"
 
 # ATTACK_TYPE="gaussian_noise"
@@ -87,7 +88,7 @@ lr_patience=20
 lr=0.1
 lr_factor=0.1
 eval_interval=5
-TAU=50
+TAU=2
 
 
 echo $RUN_ID
@@ -103,61 +104,48 @@ load_from="steps"
 
 
 
+epoch_loss_metric="loss"
+sort_order="descending"
+epoch_loss_window=0
+epoch_loss_interval=1
 
 
 
 
-set_size=1
-
-
-
-
-
-EpochAccMetric="loss"
-sortOrder="descending"
-EpochAccWindow=-1
-EpochAccInterval=1
-
-
-
-
-# for removal_metric in 'Caper'
-for removal_metric in 'EpochAcc'
+for removal_metric in 'Caper'
+# for removal_metric in 'EpochLoss'
 # for removal_metric in 'Random'
 do
-	for num_sets in 40
+	for removal_percentage in 40
 	do	
 		for task_num in 0 1 2 3 4 5
 		do
-			for trial in 1 2 3
+			for trial in 1
 			do
 
 				time srun apptainer run --nv ~/pytorch-advcorr2.simg \
 				python "main-steps.py" --arch=$arch --dataset=$dataset --run_id=$RUN_ID --dropout_factor=$dropout_factor \
-				--prune_perc_per_layer=$sparsity --train_epochs=$EPOCHS --finetune_epochs=150 \
-				--lr=$lr --lr_patience=$lr_patience --lr_factor=$lr_factor --lr_min=$lr_min \
-				--tau=$TAU --attack_type=$ATTACK_TYPE  --trial_num=$trial --batch_size=$BATCH_SIZE --set_size=$set_size --num_sets=$num_sets \
-				--task_num=$task_num  --removal_metric=$removal_metric --load_from=$load_from --modifier_string=$modifier_string \
-				--eval_interval=$eval_interval --setSorting=$setSorting --steps=$steps \
-				--pretrained --sortOrder=$sortOrder \
-				--EpochAccMetric=$EpochAccMetric --EpochAccEpochs=$EpochAccWindow --EpochAccInterval=$EpochAccInterval
+				--prune_perc_per_layer=$sparsity --train_epochs=$EPOCHS --finetune_epochs=2 \
+				--tau=$TAU --attack_type=$ATTACK_TYPE  --trial_num=$trial --batch_size=$BATCH_SIZE --removal_percentage=$removal_percentage \
+				--task_num=$task_num --removal_metric=$removal_metric --load_from=$load_from --modifier_string=$modifier_string \
+				--eval_interval=$eval_interval --steps=$steps --pretrained --sort_order=$sort_order \
+				--epoch_loss_metric=$epoch_loss_metric --epoch_loss_epochs=$epoch_loss_window --epoch_loss_interval=$epoch_loss_interval \
+				--lr=$lr --lr_patience=$lr_patience --lr_factor=$lr_factor --lr_min=$lr_min
 
 
 
 				###############################################################################################################################
 				### Using scheduler
-
-
-				# # Use pretrained
 				# time srun apptainer run --nv ~/pytorch-advcorr2.simg \
 				# python "main-steps.py" --arch=$arch --dataset=$dataset --run_id=$RUN_ID --dropout_factor=$dropout_factor \
 				# --prune_perc_per_layer=$sparsity --train_epochs=$EPOCHS --finetune_epochs=150 \
-				# --lr=$lr --lr_patience=$lr_patience --lr_factor=$lr_factor --lr_min=$lr_min \
-				# --tau=$TAU --attack_type=$ATTACK_TYPE  --trial_num=$trial --batch_size=$BATCH_SIZE --set_size=$set_size --num_sets=$num_sets \
-				# --task_num=$task_num  --removal_metric=$removal_metric --load_from=$load_from --modifier_string=$modifier_string \
-				# --eval_interval=$eval_interval --setSorting=$setSorting --steps=$steps \
-				# --pretrained --use_train_scheduler --sortOrder=$sortOrder \
-				# --EpochAccMetric=$EpochAccMetric --EpochAccEpochs=$EpochAccWindow --EpochAccInterval=$EpochAccInterval
+				# --tau=$TAU --attack_type=$ATTACK_TYPE  --trial_num=$trial --batch_size=$BATCH_SIZE --removal_percentage=$removal_percentage \
+				# --task_num=$task_num --removal_metric=$removal_metric --load_from=$load_from --modifier_string=$modifier_string \
+				# --eval_interval=$eval_interval --steps=$steps --pretrained --sort_order=$sort_order \
+				# --epoch_loss_metric=$epoch_loss_metric --epoch_loss_epochs=$epoch_loss_window --epoch_loss_interval=$epoch_loss_interval \
+				# --lr=$lr --lr_factor=$lr_factor --use_train_scheduler
+
+
 
 			done
 		done
