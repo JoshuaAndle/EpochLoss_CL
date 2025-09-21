@@ -6,41 +6,38 @@ from __future__ import print_function
 
 import os
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-from tqdm import tqdm
+import argparse
 
 import collections
 import time
 import copy
 import random
-import multiprocessing
-import json
-import copy
 from math import floor
-# from fvcore.nn import FlopCountAnalysis
+from typing import Optional
+
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torch.utils.data as data
 from torch.autograd import Variable
 from torch.optim.lr_scheduler  import MultiStepLR
+
 import torchnet as tnt
 import torchattacks
-from AuxiliaryScripts.RemovalMetrics.Caper.utils import SmoothCrossEntropyLoss
-from AuxiliaryScripts.RemovalMetrics.Caper.checkpoint import save_checkpoint 
+ 
 # Custom imports
+from AuxiliaryScripts import clmodels
+from AuxiliaryScripts import corruptions
 from AuxiliaryScripts import network as net
 from AuxiliaryScripts import utils
-from AuxiliaryScripts import clmodels
-from AuxiliaryScripts.utils import activations
-from AuxiliaryScripts import corruptions
 
 
-import matplotlib.pyplot as plt
 
 class Manager(object):
     """Performs pruning on the given model."""
     ### Relavent arguments are moved to the manager to explicitly show which arguments are used by it
-    def __init__(self, args, checkpoint, first_task_classnum=10):
+    def __init__(self, args:argparse.Namespace, checkpoint:Optional[dict], first_task_classnum:int = 10):
         self.args = args
         self.task_num = args.task_num
         self.train_loader = None 
@@ -53,7 +50,6 @@ class Manager(object):
         self.save_prefix = None
         
         self.sampledict = None
-        ### These are the hardcoded connections withing a ResNet18 model, for simplicity of code. 
         
         """
         Explanation of indices lists:
@@ -68,6 +64,7 @@ class Manager(object):
         
         """
         
+        ### These are the hardcoded connections withing a ResNet18 model, for simplicity of code. 
         if args.arch == 'resnet18':
             ### The parent and child idxs for the updated relu layers with in_place=False
             self.parent_idxs = [1, 7, 10, 13, 16, 20, 23, 29, 32, 36, 39, 45, 48, 52, 55, 61]
@@ -135,10 +132,14 @@ class Manager(object):
 
 
     def prepare_task(self):
+        """
+            Prepare a mask for the new task's weights, and select which subnetworks to share.
+            Note: Have to add the new classifier's task mask AFTER the classifier has been added to the network at the start of the task.
+                Otherwise the classifier will not be included in the mask.
+        """
         self.make_taskmask()
-        ### Have to add the new classifier's task mask AFTER the classifier has been added to the network at the start of the task
-        ### Reload the previously omitted frozen weights. We don't want to reload the previous tasks newly trained weights so we offset by 1 task to only target omitted weights
-        self.update_statedict(tasknum=(self.task_num - 1))
+        ### Reload the weights which were frozen at the start of the previous task (we offset tasknum by 1 to do this) 
+        self.update_statedict(tasknum=(self.task_num - 1), use_trainable=False)
         ### Update the backup model to reflect the newly trained weights and batchnorms before making sharing decision
         self.network.backupmodel.load_state_dict(self.network.model.state_dict())
         ### Decide which frozen weights to mask to zero for the task
@@ -153,76 +154,53 @@ class Manager(object):
 
 
 
-    ### This function was written to determine which past tasks to share weights from. I've gutted it to simplify it and share all past weights for each task since its not relevant to the project
     def pick_shared_task(self):
+        """
+            This function was written to determine which past tasks to share weights from. 
+            For now I've gutted it to simplify things and share all past weights for each task since its not relevant to the project
+            We are leaving it in though in case we wish to expand on the current setup to consider alternative weight sharing
+        """
         print("Current tasknum: ", self.task_num)
         for module_idx, (name,module) in enumerate(self.network.model.named_modules()):
             if isinstance(module, nn.Conv2d) or isinstance(module, nn.Linear) and name != "classifier":
 
                 new_weights = utils.get_trainable_mask(module_idx, self.all_task_masks, self.task_num)
-                ### If ANY of the weights for a filter in module aren't trainable, then it shouldn't be treated as trainable
-                ###   This is to ensure that we don't retrain omitted outgoing weights from previous tasks that had been removed from their task mask
                 
-                ### Alternatively just identify frozen filters and prevent new weights being connected to them. Much more robust and simple
-                frozen_filters = utils.get_frozen_mask(module.weight.data, module_idx, self.all_task_masks, self.task_num)
-
-                # print("Number of frozen filters: ", frozen_filters.long().sum())
-                new_weights[frozen_filters.eq(1)] = 0
-                
-                ### This will omit any weights which weren't used in the task being shared while keeping all trainable weights
                 self.all_task_masks[self.task_num][module_idx] = new_weights
                 
+                ### Sharing all previous tasks' weights for simplicity
                 for t in range(0,self.task_num):
                     shared_weights = self.all_task_masks[t][module_idx].clone().detach()
-                    ### This will omit any weights which weren't used in the task being shared while keeping all trainable weights
-                    self.all_task_masks[self.task_num][module_idx] = torch.max(new_weights, shared_weights)
+                    ### Include any shared weights into the current task mask
+                    self.all_task_masks[self.task_num][module_idx] = torch.max(self.all_task_masks[self.task_num][module_idx], shared_weights)
             
         
         ### Set all omitted weights to 0 with the updated task mask
         self.network.apply_mask(self.all_task_masks, self.task_num)
 
         
+
+
+
+
+
+
+
+
     """
     ##########################################################################################################################################
     Pruning Functions
     ##########################################################################################################################################
     """
-    ### Goes through and calls prune_mask for each layer and stores the results
-    ### Then applies the masks to the weights
-    def prune(self):
-        print('Pruning for dataset idx: %d' % (self.task_num))
-        print('Pruning each layer by removing %.2f%% of values' % (100 * self.args.prune_perc_per_layer))
-        
-        for module_idx, (name,module) in enumerate(self.network.model.named_modules()):
-            if isinstance(module, nn.Conv2d) or isinstance(module, nn.Linear) and name != "classifier":
 
 
-
-                ### If this isn't a skip layer, prune as normal
-                trainable_mask = utils.get_trainable_mask(module_idx, self.all_task_masks, self.task_num)
-              
-                ### Get the pruned mask for the current layer
-                pruned_mask = self.pruning_mask(module.weight.data.clone().detach(), trainable_mask, module_idx)
-
-                for module_idx2, (name2,module2)  in enumerate(self.network.backupmodel.named_modules()):
-                    if module_idx == module_idx2:
-                        print("Module idx 2:", module_idx2, " ", module2, flush=True)
-                        module2.weight.data[pruned_mask.eq(1)] = 0.0
-                        
-                # Set pruned weights to 0.
-                module.weight.data[pruned_mask.eq(1)] = 0.0
-                self.all_task_masks[self.task_num][module_idx][pruned_mask.eq(1)] = 0
-
-
-            
 
  
-    def pruning_mask(self, weights, trainable_mask, layer_idx):
+    def pruning_mask(self, weights: torch.Tensor, trainable_mask: torch.Tensor, layer_idx: int):
         """
             Ranks prunable filters by magnitude. Sets all below kth to 0.
             Returns pruned mask.
-        """
-        """
+
             weight_magnitudes: 2D weight magnitudes
             trainable_mask: 2D boolean mask, True for trainable weights
             task_mask: 2D boolean mask, 1 for all weights included in current task (not omitted incoming weights)
@@ -264,6 +242,42 @@ class Manager(object):
 
         return prune_mask
         
+
+
+
+
+
+
+    ### Goes through and calls prune_mask for each layer and stores the results
+    ### Then applies the masks to the weights
+    def prune(self):
+        print('Pruning for dataset idx: %d' % (self.task_num))
+        print('Pruning each layer by removing %.2f%% of values' % (100 * self.args.prune_perc_per_layer))
+        
+        for module_idx, (name,module) in enumerate(self.network.model.named_modules()):
+            if isinstance(module, nn.Conv2d) or isinstance(module, nn.Linear) and name != "classifier":
+
+                ### Get a mask of all trainable weights for this layer
+                trainable_mask = utils.get_trainable_mask(module_idx, self.all_task_masks, self.task_num)
+              
+                ### Get the pruned mask for the current layer from among trainable weights
+                pruned_mask = self.pruning_mask(module.weight.data.clone().detach(), trainable_mask, module_idx)
+
+                ### Update backup model to reflect pruning
+                for module_idx2, (name2,module2)  in enumerate(self.network.backupmodel.named_modules()):
+                    if module_idx == module_idx2:
+                        print("Module idx 2:", module_idx2, " ", module2, flush=True)
+                        module2.weight.data[pruned_mask.eq(1)] = 0.0
+                        
+                ### Set pruned weights to 0.
+                module.weight.data[pruned_mask.eq(1)] = 0.0
+                self.all_task_masks[self.task_num][module_idx][pruned_mask.eq(1)] = 0
+
+
+            
+
+
+
         
     """
     ##########################################################################################################################################
@@ -272,11 +286,7 @@ class Manager(object):
     """
 
 
-
-
-
-
-    def eval(self, num_class=10, use_attack=True, Data=None):
+    def eval(self, data:data.DataLoader, num_class:int=10, use_attack:bool=True):
         """Performs evaluation with per-class accuracy tracking for non-attacked predictions."""
 
         self.network.apply_mask(self.all_task_masks, self.task_num)
@@ -285,13 +295,12 @@ class Manager(object):
         error_meter = None
         error_meter_attacked = None
 
-        for batchidx, (batch, label, IDs) in enumerate(Data):
+        for batchidx, (batch, label, IDs) in enumerate(data):
             if self.args.cuda:
                 batch = batch.cuda()
                 label = label.cuda()
 
-
-
+            ### If evaluating attacked accuracy, apply attack
             if use_attack:
                 if self.args.attack_type == 'PGD':
                     attack = torchattacks.PGD(self.network.model, eps=0.03, alpha=0.0039, steps=10, random_start=True)
@@ -346,12 +355,12 @@ class Manager(object):
 
 
 
-    ### Train the model for the current task, using all past frozen weights as well
-    def train(self, epochs=10, save=True, savename='', num_class=10, total_epochs = 0, start_epoch = 0, use_attack=True, save_best_model=False, trackpreds = False):
-        if total_epochs == 0:
-            total_epochs = self.args.train_epochs
-        """Performs training."""
-        print('\n\n number of epochs is', epochs)
+    ### Train the model for the current task. Frozen, shared weights are not updated
+    def train(
+        self, epochs:int=10, save:bool=True, savename:str='', num_class:int=10, 
+        start_epoch:int = 0, use_attack:bool=True, save_best_model:bool=False, trackpreds:bool = False
+        ):
+
         best_model = None
         best_model_acc = 0
         best_model_adv_acc = 0
@@ -369,14 +378,11 @@ class Manager(object):
         
         
         if self.args.use_train_scheduler:
-            # milestones = [40,60,80]
             ### These weren't tuned, just rough estimates aimed to allow convergence at each step for either training or finetuning steps
             milestones = [(2*(epochs/5)),(3*(epochs/5)),(4*(epochs/5))]
-
             scheduler  = MultiStepLR(optimizer, milestones=milestones, gamma=self.args.lr_factor) 
         else:
             patience = self.args.lr_patience
-            lrmin = self.args.lr_min
 
         
         loss = nn.CrossEntropyLoss()
@@ -388,10 +394,9 @@ class Manager(object):
         if start_epoch==0:
             epochs_to_run = range(epochs)
         else: 
-            epochs_to_run= range(start_epoch-1, epochs+start_epoch-1)
+            epochs_to_run= range(start_epoch, epochs+start_epoch)
 
-         # Initialize total FLOPs counter
-        # total_flops = 0
+
         for idx in epochs_to_run:
             epoch_idx = idx + 1
             # print('Epoch: ', epoch_idx, ' Learning rate:', optimizer.param_groups[0]['lr'], flush=True)
@@ -403,13 +408,12 @@ class Manager(object):
                 if self.args.cuda:
                     x = x.cuda()
                     y = y.cuda()
-                    # z = z.cuda()
+
                 x = Variable(x)
                 y = Variable(y)
 
 
                 if use_attack==True:
-
                     if self.args.attack_type in ['PGD', 'AutoAttack']:
                         attack = torchattacks.PGD(self.network.model, eps=0.03, alpha=0.0039, steps=10, random_start=True)
                         x = attack(x,y)
@@ -443,9 +447,7 @@ class Manager(object):
                     x = x.cuda()
               
     
-                # Set grads to 0.
                 self.network.model.zero_grad()
-                # Do forward-backward.
                 output = self.network.model(x)
 
 
@@ -461,7 +463,7 @@ class Manager(object):
                 # Set frozen param grads to 0.
                 self.network.make_grads_zero(self.all_task_masks, self.task_num)
                 
-                # Update params.
+                # Update unfrozen params.
                 optimizer.step()
 
                 # Track training accuracy
@@ -477,38 +479,32 @@ class Manager(object):
             
 
             ### Every Nth epoch evaluate. Compromises between seeing periodic accuracy updates and the added runtime of making attacks on test data
-            ### If you want accuracies to be printed out each epoch use verbose==True
+            ### If you want accuracies to be printed out each epoch use args.eval_interval==1
             if epoch_idx % self.args.eval_interval == 0 or epoch_idx==epochs:
-                # Compute and print training accuracy
+
                 train_accuracy = 100.0 * total_correct / total_samples
                 print(f"Epoch {epoch_idx} - Training Accuracy: {train_accuracy:.2f}%")
-            
 
-                print('\nEvaluating at Epoch: ', epoch_idx, ' after ', self.args.eval_interval, 
-                        ' epochs at Learning rate:', optimizer.param_groups[0]['lr'], flush=True)
-                if epoch_idx == epochs:
-                    print("Final epoch evaluation: epoch ", epoch_idx)
-
-                val_errors, val_errors_attacked = self.eval(num_class,  use_attack=use_attack, Data=self.val_loader)
+                val_errors, val_errors_attacked = self.eval(data=self.val_loader, num_class=num_class,  use_attack=use_attack)
                 
                 val_acc_history.append(100-val_errors[0])
                 val_acc_history_attacked.append(100-val_errors_attacked[0])
                 val_accuracy = 100 - val_errors[0]  # Top-1 accuracy.
                 val_accuracy_attacked = 100 - val_errors_attacked[0]  # Top-1 accuracy.
               
-
-               
                 print('Adversarial Accuracy on attacked data: %0.2f%%, best is %0.2f%%' %(val_accuracy_attacked, best_model_adv_acc))  
                 print('Vanilla Accuracy on un-attacked data: %0.2f%%, best is %0.2f%%' %(val_accuracy, best_model_acc))
+
+                if ((use_attack == True and val_accuracy_attacked > best_model_adv_acc)
+                    or (use_attack == False and val_accuracy > best_model_acc)):
+                    best_model_adv_acc = val_accuracy_attacked  
+                    best_model_acc = val_accuracy
+                    best_model = copy.deepcopy(self.network.model.state_dict())
 
                 if self.args.use_train_scheduler == False:
                     if ((use_attack == True and val_accuracy_attacked > best_model_adv_acc)
                         or (use_attack == False and val_accuracy > best_model_acc)):
-                        best_model_adv_acc = val_accuracy_attacked  
-                        # best_model_acc might not be the best, as we need the best model based on adversarial accuracy not the normal one
-                        best_model_acc = val_accuracy
-                        ### If using early stopping instead of scheduling, reset patience when the accuracy is improved and save the new best model weights
-                        best_model = copy.deepcopy(self.network.model.state_dict())
+                        ### Reset patience if new best accuracy achieved
                         patience = self.args.lr_patience
 
                     else:
@@ -516,17 +512,11 @@ class Manager(object):
                         ### After sufficient epochs with no accuracy improvement, lr decays. If its below the min threshold, then the model is expected to have converged and training ends early
                         if patience <= 0:
                             lr *= self.args.lr_factor
-                            if lr < lrmin:
+                            if lr < self.args.lr_min:
                                 break
                             for param_group in optimizer.param_groups:
                                 param_group['lr'] *= self.args.lr_factor  
                             patience = self.args.lr_patience                        
-                else:
-                    if ((use_attack == True and val_accuracy_attacked > best_model_adv_acc)
-                        or (use_attack == False and val_accuracy > best_model_acc)):
-                        best_model_adv_acc = val_accuracy_attacked  
-                        best_model_acc = val_accuracy
-                        best_model = copy.deepcopy(self.network.model.state_dict())
                                         
                     
         print('Finished finetuning...')
@@ -578,7 +568,7 @@ class Manager(object):
         
 
     ### Reloads the values of all frozen weights in order to undo any omitting. This is done usually when moving to a new task to allow for new masks to be selected
-    def update_statedict(self, tasknum, use_trainable=False):
+    def update_statedict(self, tasknum:int, use_trainable:bool=False):
         print("Updating state dict from task number: ", tasknum)
         for module_idx, (name,module) in enumerate(self.network.model.named_modules()):
             if isinstance(module, nn.Conv2d) or isinstance(module, nn.Linear) and name != "classifier":

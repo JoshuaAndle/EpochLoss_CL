@@ -1,9 +1,6 @@
 """Simple data generator for training and testing data"""
 
 import numpy as np
-import scipy.io as spio
-import math
-import collections
 
 from torch.utils.data import Dataset
 from PIL import Image
@@ -36,7 +33,7 @@ class IdTrackDataGenerator(Dataset):
     def __init__(self, x, y, z, transform=None):
         self.x = x
         self.y = y
-        self.z = z
+        self.z = z # torch.Tensor of unique IDs for all samples
         self.transform = transform
         
     def __len__(self):

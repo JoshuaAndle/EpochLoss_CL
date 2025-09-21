@@ -25,11 +25,11 @@ module load apptainer
 arch="resnet18"
 # arch="vgg16"
 
-# dataset="MPC"
-# modifier_string="None,None,None,None,None,None"
+dataset="MPC"
+modifier_string="None,None,None,None,None,None"
 
 # dataset="SynthDisjoint"
-dataset="SynthDisjoint_Reverse"
+# dataset="SynthDisjoint_Reverse"
 
 
 # dataset="ADM"
@@ -51,7 +51,7 @@ dataset="SynthDisjoint_Reverse"
 # modifier_string="ai,ai,nature,nature,nature,nature"
 # modifier_string="ai,ai,ai,nature,nature,nature"
 # modifier_string="ai,ai,ai,ai,nature,nature"
-modifier_string="ai,ai,ai,ai,ai,nature"
+# modifier_string="ai,ai,ai,ai,ai,nature"
 
 # modifier_string="nature,nature,ai"
 # modifier_string="nature,ai,nature"
@@ -70,13 +70,16 @@ modifier_string="ai,ai,ai,ai,ai,nature"
 
 # RUN_ID="pretrained-final-LfBaseline"
 
-RUN_ID="pretrained-synthetic-LfBaseline"
+# RUN_ID="pretrained-synthetic-LfBaseline"
 
+
+RUN_ID="pretrained-MPC-LfBaseline"
 
 
 
 ### our model args
-EPOCHS=300
+# EPOCHS=300
+EPOCHS=3
 dropout_factor=0.5
 BATCH_SIZE=128
 sparsity=0.65
@@ -87,8 +90,8 @@ lr_patience=20
 
 # HSIC args
 TAU=50
-# ATTACK_TYPE="None"
-ATTACK_TYPE="PGD"
+ATTACK_TYPE="None"
+# ATTACK_TYPE="PGD"
 # ATTACK_TYPE="AutoAttack"
 
 # ATTACK_TYPE="gaussian_noise"
@@ -104,7 +107,8 @@ steps="allsteps"
 load_from="baseline"
 # load_from="steps"
 removal_metric="NoRemoval"
-eval_interval=5
+# eval_interval=5
+eval_interval=1
 
 echo $RUN_ID
 
@@ -112,16 +116,16 @@ echo $RUN_ID
 
 
 
-for trial in 1 2
+for trial in 1
 # for trial in 1 2 3 4 5 
 do
-	for task_num in 1 2 3 4 5
+	for task_num in 0 1 2 3 4 5
 	# for task_num in 0
 	do
 
 		time srun apptainer run --nv ~/pytorch-advcorr2.simg \
 		python "main-steps.py" --arch=$arch --dataset=$dataset --run_id=$RUN_ID --dropout_factor=$dropout_factor \
-		--prune_perc_per_layer=$sparsity --train_epochs=$EPOCHS --finetune_epochs=150 \
+		--prune_perc_per_layer=$sparsity --train_epochs=$EPOCHS --finetune_epochs=2 \
 		--lr=$lr --lr_patience=$lr_patience --lr_factor=$lr_factor --lr_min=$lr_min \
 		--tau=$TAU --attack_type=$ATTACK_TYPE  --trial_num=$trial --batch_size=$BATCH_SIZE \
 		--task_num=$task_num  --removal_metric=$removal_metric --load_from=$load_from --modifier_string=$modifier_string \

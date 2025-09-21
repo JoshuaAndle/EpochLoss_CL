@@ -174,10 +174,6 @@ def generate_activations(data_loader, model, device, item_key, save_act=False, s
 
 
 
-
-
-
-
 #### Function uses the determined key heuristic to define Error Prone Filters ####
 def get_epf_idx(act_norm, act_noise):
     # Assumption: act_norm = Samples X F X H X W, act_noise = Trials X Samples X F X H X W
@@ -259,6 +255,28 @@ def get_thresholded_samples(act_norm, act_noise, save_plot=False, save_plot_fnam
 
     # END FOR    
     return sample_counter
+
+
+
+
+
+
+
+
+
+
+
+def interp(min_value, max_value, value):
+    return (((value - min_value)/(max_value - min_value + 1e-6)))
+
+
+
+
+
+
+
+
+
 
 # #### Activation function ####
 # def activations(data_loader, model, device, item_key):

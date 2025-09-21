@@ -1,3 +1,4 @@
+import os
 import copy
 import torch
 import scipy
@@ -10,9 +11,7 @@ import torch.nn          as nn
 import torch.optim       as optim
 from torch.optim.lr_scheduler  import MultiStepLR, CosineAnnealingLR
 from AuxiliaryScripts.RemovalMetrics.Caper.checkpoint import save_checkpoint 
-from AuxiliaryScripts.RemovalMetrics.Caper.utils import generate_activations, SmoothCrossEntropyLoss 
-from AuxiliaryScripts.Normalization_metrics import Normalization_Techniques
-import os
+from AuxiliaryScripts.RemovalMetrics.Caper.utils import generate_activations, SmoothCrossEntropyLoss, interp
 from AuxiliaryScripts import corruptions 
 import datetime
 
@@ -132,8 +131,7 @@ class Caper_Method():
 
         cur_min = np.repeat(np.min(cur_var,0), cur_var.shape[0]).reshape(cur_var.shape[1], cur_var.shape[0]).T
         cur_max = np.repeat(np.max(cur_var,0), cur_var.shape[0]).reshape(cur_var.shape[1], cur_var.shape[0]).T
-        Normalization = Normalization_Techniques(self.args)
-        norm_cur_var = Normalization.interp(cur_min, cur_max, cur_var)
+        norm_cur_var = interp(cur_min, cur_max, cur_var)
         ### Seems like it averages over all trials for each given sample, so the final shape should be the number of samples by the number of tracked filters
         mid_data     = np.mean(norm_cur_var, 1)
         print("mid data shape: ", mid_data.shape)
@@ -159,9 +157,6 @@ class Caper_Method():
             os.remove(save_act_fname.replace('.txt', '_orig.txt'))  # Remove the '_orig' activation file
             print(f"Cleared file: {save_act_fname.replace('.txt', '_orig.txt')}")
 
-        # if os.path.exists(save_id_fname):
-        #     os.remove(save_id_fname)  # Remove the main activation file
-        #     print(f"Cleared file: {save_id_fname}")
 
         act_orig    = None
         act_perturb = None
@@ -179,17 +174,14 @@ class Caper_Method():
             c_layer = np.mean(c_layer, (2,3))
         else:
             print("not averaging the child activations for child layer: ", child_layer)
-        #if p_layer.shape[0] != c_layer.shape[1]: 
-        #    if p_layer.shape[0] < c_layer.shape[1]:
-        #        c_layer = c_layer[:, -p_layer.shape[0]:]
+
 
         ### Normalize all filters per-sample, then average over all samples per-filter
         norm_const = np.sum(c_layer, 1)
         sens_prior = c_layer/np.repeat(norm_const, c_layer.shape[1]).reshape(c_layer.shape)
         sens_prior = np.mean(sens_prior, 0)
         
-        Normalization = Normalization_Techniques(self.args)
-        sens_prior = Normalization.interp(np.min(sens_prior), np.max(sens_prior), sens_prior)
+        sens_prior = interp(np.min(sens_prior), np.max(sens_prior), sens_prior)
 
         assert(np.max(sens_prior) <= 1.)
         assert(np.min(sens_prior) >= 0.)
@@ -230,18 +222,22 @@ class Caper_Method():
             num_imgs        = perturb_data.shape[0]
             del perturb_data
             
-            # total_images = 0
-            # for data_batch, label_batch, id_batch in data_loader:
-            #     total_images += data_batch.shape[0]
-            # print(f"Total images in data loader: {total_images}")
 
             print("Starting generate_activations perturbed: ", datetime.datetime.now(), flush=True)
 
             if act_perturb is None:
-                act_perturb, _, _, self.sampledict = generate_activations(data_loader, self.model, device, layer, save_act=True, save_act_fname=save_act_fname, save_id_fname=save_id_fname, ret_act=False, f_idx=sens_idx, sampledict=self.sampledict, perturbed=True, trial=trial)
+                act_perturb, _, _, self.sampledict = generate_activations(
+                                                                    data_loader, self.model, device, layer, save_act=True, 
+                                                                    save_act_fname=save_act_fname, save_id_fname=save_id_fname, ret_act=False, 
+                                                                    f_idx=sens_idx, sampledict=self.sampledict, perturbed=True, trial=trial
+                                                                )
         
             else:
-                act_perturb, _, _, self.sampledict = generate_activations(data_loader, self.model, device, layer, save_act=True, save_act_fname=save_act_fname, save_id_fname=save_id_fname, ret_act=False, mid_level=True, f_idx=sens_idx, sampledict=self.sampledict, perturbed=True, trial=trial)
+                act_perturb, _, _, self.sampledict = generate_activations(
+                                                                    data_loader, self.model, device, layer, save_act=True, 
+                                                                    save_act_fname=save_act_fname, save_id_fname=save_id_fname, ret_act=False, mid_level=True, 
+                                                                    f_idx=sens_idx, sampledict=self.sampledict, perturbed=True, trial=trial
+                                                                )
 
         e_time = time.time()
         print('Time: %f'%(e_time - s_time))
@@ -249,23 +245,8 @@ class Caper_Method():
         return num_imgs 
 
 
-    ###################
-    #### need an extra_loader here
-    ###################
-
-    # #### Generate mask for data samples (to apply curriculum) ####
-    # def gen_data_mask(self, stats, sample_percentage):
-    #     print('\n stat is' ,  stats.shape[0])
-
-    #     # mask   = np.where(stats<=np.sort(stats)[::-1][int(sample_percentage*stats.shape[0])])[0]
-    #     mask   = np.where(stats<=np.sort(stats)[::-1][int(sample_percentage)])[0]
-
-    #     return mask 
-
-
 
     def gen_data_mask(self, stats, sample_percentage):
-        # print('\n stat is' ,  stats.shape[0])
         labels = []
         IDs = []
         for data, target, ID in self.extraloader:
@@ -274,14 +255,10 @@ class Caper_Method():
             IDs.extend(ID)
 
         ### Note: Stats is a list of the mean perturbation magnitudes for all samples, with shape [# samples]
-
-        # print("Ids length: ", len(IDs), " ", IDs, flush=True)
-
         ### Sorts in descending order
         sorted_indices =  np.argsort(stats)[::-1]
 
-        # threshold=self.args.caperClassAllowance
-        threshold=self.args.classRemovalAllowance
+        threshold=self.args.class_removal_allowance
         
         totalRemoveCount = sample_percentage
         # top_indices = sorted_indices[:int(sample_percentage)]
@@ -301,12 +278,12 @@ class Caper_Method():
 
 
        
-        # print("Mask: ", mask)
         # Now create the complement of the mask
         total_indices = set(range(len(stats)))  # Full set of indices
         print('\n mask len is', len(mask), 'set mask len is', len(set(mask)))
         mask_set = set(mask)  # Convert mask to set
-        mask = np.array(list(total_indices - mask_set))  # Find the complement
+        # mask = np.array(list(total_indices - mask_set))  # Find the complement
+        mask = list(total_indices - mask_set)  # Find the complement
         # print("Mask set subtract: ", mask)
         return mask
 
@@ -343,8 +320,6 @@ class Caper_Method():
 
             
         
-        # elif self.args.arch == 'resnet50':
-        #     layers = np.load('resnet50_v2_cifar_dict.npy', allow_pickle=True).item()
 
         else:
             print('Invalid Model Selection! Exiting')
@@ -399,19 +374,21 @@ class Caper_Method():
 
 
             logitsBestFile = Save_dir+'/logits_best_'+str(self.args.caper_epsilon)+'_'+ self.args.Window+'_'+\
-                                                    str(self.args.sample_percentage)+'_'+str(self.args.tau)+'_'+layers['layers'][c_layer]+'.txt'
+                                                    str(self.args.removal_percentage)+'_'+str(self.args.tau)+'_'+layers['layers'][c_layer]+'.txt'
             idsBestFile = Save_dir+'/ids_'+str(self.args.caper_epsilon)+'_'+ self.args.Window+'_'+\
-                                                    str(self.args.sample_percentage)+'_'+str(self.args.tau)+'_'+layers['layers'][c_layer]+'.txt'            
+                                                    str(self.args.removal_percentage)+'_'+str(self.args.tau)+'_'+layers['layers'][c_layer]+'.txt'            
             
             if collect_stats is None:
                 if 'shortcut' in layers['layers'][c_layer+1]:
                     if 'fc' in layers['layers'][c_layer+2]:
                         continue
                     print("Using shortcut generate_counts()")
-                    num_imgs = self.generate_counts(self.model, self.extraloader, device, layers['layers'][c_layer], layers['layers'][c_layer+2], self.args.batch_size, 10, logitsBestFile, idsBestFile)
+                    num_imgs = self.generate_counts(self.model, self.extraloader, device, layers['layers'][c_layer], layers['layers'][c_layer+2], 
+                                                    self.args.batch_size, 10, logitsBestFile, idsBestFile)
                 else:
                     print("Using standard generate_counts()")                    
-                    num_imgs = self.generate_counts(self.model, self.extraloader, device, layers['layers'][c_layer], layers['layers'][c_layer+1], self.args.batch_size, 10, logitsBestFile, idsBestFile)
+                    num_imgs = self.generate_counts(self.model, self.extraloader, device, layers['layers'][c_layer], layers['layers'][c_layer+1], 
+                                                    self.args.batch_size, 10, logitsBestFile, idsBestFile)
                 
                 collect_stats = multiplier[m_counter]* self.generate_stats(logitsBestFile, idsBestFile, size=num_imgs)
 
@@ -421,9 +398,11 @@ class Caper_Method():
                     if 'fc' in layers['layers'][c_layer+2]:
                         continue
                     
-                    num_imgs = self.generate_counts(self.model, self.extraloader, device, layers['layers'][c_layer], layers['layers'][c_layer+2], self.args.batch_size, 10, logitsBestFile, idsBestFile)
+                    num_imgs = self.generate_counts(self.model, self.extraloader, device, layers['layers'][c_layer], layers['layers'][c_layer+2], 
+                                                    self.args.batch_size, 10, logitsBestFile, idsBestFile)
                 else:
-                    num_imgs = self.generate_counts(self.model, self.extraloader, device, layers['layers'][c_layer], layers['layers'][c_layer+1], self.args.batch_size, 10, logitsBestFile, idsBestFile)
+                    num_imgs = self.generate_counts(self.model, self.extraloader, device, layers['layers'][c_layer], layers['layers'][c_layer+1], 
+                                                    self.args.batch_size, 10, logitsBestFile, idsBestFile)
                 
                 collect_stats += multiplier[m_counter]* self.generate_stats(logitsBestFile, idsBestFile, size=num_imgs)
 
@@ -431,4 +410,4 @@ class Caper_Method():
 
             m_counter += 1
 
-        return self.gen_data_mask(collect_stats, self.args.sample_percentage)
+        return self.gen_data_mask(collect_stats, self.args.removal_percentage)

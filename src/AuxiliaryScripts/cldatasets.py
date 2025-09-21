@@ -1,23 +1,25 @@
-import os,sys
+import os
+import sys
 import numpy as np
-import torch
-from torchvision import datasets,transforms
-from sklearn.utils import shuffle
 import copy
-
-import requests, zipfile, io
+from typing import Optional
+import random
 
 import math
+import torch
 import torchvision
 import torchvision.datasets as datasets
 import torchvision.transforms as transforms
-import random
 
 
 
 
-
-def get_mixedCIFAR_PMNIST(seed = 0, pc_valid=0.1, task_num=0, split="", offset=False, preprocess="Normalized", attack=None, reduced=True, modifier=None):
+### Not used in paper, but mixes tasks from CIFAR and Permuted MNIST
+def get_mixedCIFAR_PMNIST(
+    seed:int = 0, pc_valid:float=0.1, task_num:int=0, 
+    split:str="", offset:bool=False, preprocess:str="Normalized", 
+    attack:Optional[str]=None, reduced:bool=True
+    ):
     """
     Sequence: 
         0:CIFAR100 split 1, 
@@ -27,6 +29,7 @@ def get_mixedCIFAR_PMNIST(seed = 0, pc_valid=0.1, task_num=0, split="", offset=F
         4:CIFAR100 split 4, 
         5:Permuted MNIST 3, 
     """
+    ### Check if tasks have been generated yet. If not, makes them
     if os.path.isfile(("./data/split_cifar/" + str(task_num) + "/x_train.bin")) == False:
         print("No dataset detected for cifar subsets. Creating new set prior to loading task.")
         make_splitcifar(seed=seed, pc_valid=pc_valid)
@@ -40,6 +43,7 @@ def get_mixedCIFAR_PMNIST(seed = 0, pc_valid=0.1, task_num=0, split="", offset=F
 
     print("Loading task number: ", task_num, " for split: ", split, flush=True)
 
+    ### Which tasks in sequence are from Permuted MNIST
     mnisttasks = [1,3,5]
 
     if task_num in mnisttasks:
@@ -47,7 +51,7 @@ def get_mixedCIFAR_PMNIST(seed = 0, pc_valid=0.1, task_num=0, split="", offset=F
         data['y']=torch.load(os.path.join(os.path.expanduser(('./data/PMNIST/' + str(task_num))), ('y_'+split+'.bin')))
 
     else:
-        ### skipping task 0 which is CIFAR-10, just using the smaller CIFAR-100 splits
+        ### For CIFAR tasks, skipping task 0 which is CIFAR-10, just using the smaller CIFAR-100 splits
         if task_num == 0:
             task_num = 1
         if attack and attack in ['gaussian_noise', 'gaussian_blur', 'saturate', 'rotate'] and split == "test":
@@ -57,11 +61,11 @@ def get_mixedCIFAR_PMNIST(seed = 0, pc_valid=0.1, task_num=0, split="", offset=F
             data['x']=torch.load(os.path.join(os.path.expanduser(('./data/split_cifar/' + str(task_num))), ('x_'+split+'.bin')))
         data['y']=torch.load(os.path.join(os.path.expanduser(('./data/split_cifar/' + str(task_num))), ('y_'+split+'.bin')))
 
-
+    ### Using smaller amounts of samples due to cost of adversarial training, and since MPC is used primarily for debugging
     if reduced:
         indices = torch.zeros(data['y'].size()).eq(1)
 
-        quota = 1000
+        quota = 100
         quotas = {}
         for i, y in enumerate(data['y']):
           if y.item() not in quotas.keys():
@@ -73,16 +77,17 @@ def get_mixedCIFAR_PMNIST(seed = 0, pc_valid=0.1, task_num=0, split="", offset=F
 
         data['x'] = data['x'][indices]
         data['y'] = data['y'][indices]
+    
+        # print("Number of images in reduced MPC task: ", data['x'].shape[0])
 
 
 
-
+    ### Undoes normalization of data, as it should be in range [0:1] for adversarial attack
     if preprocess=="Unnormalized" and attack not in ['gaussian_blur', 'gaussian_noise', 'saturate', 'rotate']:
         if torch.min(data['x']) < -0.001:
             print("Data normalized, rescaling to 0:1 to match perturbation scale")
             
             if task_num in mnisttasks:
-            elif task_num == 5:
                 ### Permuted MNIST
                 mean = torch.tensor([0.1307,0.1307,0.1307]).view(1, 3, 1, 1)
                 std  = torch.tensor([0.3081,0.3081, 0.3081]).view(1, 3, 1, 1)
@@ -92,8 +97,7 @@ def get_mixedCIFAR_PMNIST(seed = 0, pc_valid=0.1, task_num=0, split="", offset=F
                 std  = torch.tensor([0.2675, 0.2565, 0.2761]).view(1, 3, 1, 1)
             data['x'] = data['x'] * std + mean
 
-    print("Data min: ", torch.min(data['x']), " new max: ", torch.max(data['x']))
-
+    # print("Data min: ", torch.min(data['x']), " new max: ", torch.max(data['x']))
 
     return data
     
@@ -101,14 +105,15 @@ def get_mixedCIFAR_PMNIST(seed = 0, pc_valid=0.1, task_num=0, split="", offset=F
 
 
 
-### This is the loading function for the Mixed PMNIST-CIFAR (MPC) dataset from the paper
-def get_Synthetic(task_num=0, split="", modifier="ai", preprocess="Normalized", attack=None, order="standard"):
+### This is the loading function for the Synthetic disjoint dataset from the paper
+def get_Synthetic(
+    task_num:int=0, split:str="", 
+    modifier:str="ai", preprocess:str="Normalized", 
+    attack:Optional[str]=None, order:str="standard"
+    ):
 
     data={}
 
-    # if split == "test":
-    #     split = "val"
-    #     print("No test split for synthetic imagenet dataset! Using validation set")
     if split == "valid":
         split = "val"
 
@@ -117,7 +122,7 @@ def get_Synthetic(task_num=0, split="", modifier="ai", preprocess="Normalized", 
         taskDict = {0:"ADM", 1:"BigGAN", 2:"Midjourney", 3:"glide", 4:"stable_diffusion_v_1_4", 5:"VQDM"}
     else:
         taskDict = {0:"VQDM",1:"stable_diffusion_v_1_4",  2:"glide",3:"Midjourney", 4:"BigGAN",  5:"ADM"}  
-    # taskDict = {0:"ADM", 1:"Midjourney", 2:"glide", 3:"stable_diffusion_v_1_5", 4:"BigGAN"}
+
     generator = taskDict[task_num]
 
     loadPath = os.path.join(".", "data/Synthetic", generator, str(task_num), split, modifier) 
@@ -131,15 +136,6 @@ def get_Synthetic(task_num=0, split="", modifier="ai", preprocess="Normalized", 
 
 
     numImages = data['y'].size(0)
-    # print("Number of images: ", numImages)
-
-    numSets = numImages // 10
-
-
-    data['x'] = data['x'][:(numSets*10)]
-    data['y'] = data['y'][:(numSets*10)]
-
-    numImages = data['y'].size(0)
     print("Number of images: ", numImages)
 
     ### Map original labels to new sequential indices compatible with a new classifier
@@ -147,12 +143,10 @@ def get_Synthetic(task_num=0, split="", modifier="ai", preprocess="Normalized", 
     label_map = {original_label: new_label for new_label, original_label in enumerate(original_labels)}
     mapped_y = torch.tensor([label_map[label.item()] for label in data['y']])
 
-    # Print the original and mapped labels
-    # print("Original labels:", torch.unique(data['y']).tolist())
-    # print("Mapped labels:", torch.unique(mapped_y).tolist())
-
     data['y'] = mapped_y
 
+
+    ### Undoes normalization of data, as it should be in range [0:1] for adversarial attack
     if preprocess=="Unnormalized" and attack not in ['gaussian_blur', 'gaussian_noise', 'saturate', 'rotate']:
         if torch.min(data['x']) < -0.001:
             # print("Data normalized, rescaling to 0:1 to match perturbation scale")
@@ -175,14 +169,16 @@ def get_Synthetic(task_num=0, split="", modifier="ai", preprocess="Normalized", 
 
 
 
-### This is the loading function for the Mixed PMNIST-CIFAR (MPC) dataset from the paper
-def get_Synthetic_SingleGenerator(task_num=0, split="", generator='ADM', modifier="ai", preprocess="Normalized", attack=None):
+### This is the loading function for the Single-generator synthetic datasets from the paper
+def get_Synthetic_SingleGenerator(
+    task_num:int=0, split:str="", 
+    generator:str='ADM', modifier:str="ai", 
+    preprocess:str="Normalized", attack:Optional[str]=None
+    ):
 
     data={}
 
-    # if split == "test":
-    #     split = "val"
-    #     print("No test split for synthetic imagenet dataset! Using validation set")
+
     if split == "valid":
         split = "val"
 
@@ -198,15 +194,6 @@ def get_Synthetic_SingleGenerator(task_num=0, split="", generator='ADM', modifie
 
 
     numImages = data['y'].size(0)
-    # print("Number of images: ", numImages)
-
-    numSets = numImages // 10
-
-
-    data['x'] = data['x'][:(numSets*10)]
-    data['y'] = data['y'][:(numSets*10)]
-
-    numImages = data['y'].size(0)
     print("Number of images: ", numImages)
 
     ### Map original labels to new sequential indices compatible with a new classifier
@@ -214,12 +201,9 @@ def get_Synthetic_SingleGenerator(task_num=0, split="", generator='ADM', modifie
     label_map = {original_label: new_label for new_label, original_label in enumerate(original_labels)}
     mapped_y = torch.tensor([label_map[label.item()] for label in data['y']])
 
-    # Print the original and mapped labels
-    # print("Original labels:", torch.unique(data['y']).tolist())
-    # print("Mapped labels:", torch.unique(mapped_y).tolist())
-
     data['y'] = mapped_y
 
+    ### Undoes normalization of data, as it should be in range [0:1] for adversarial attack
     if preprocess=="Unnormalized" and attack not in ['gaussian_blur', 'gaussian_noise', 'saturate', 'rotate']:
         if torch.min(data['x']) < -0.001:
             # print("Data normalized, rescaling to 0:1 to match perturbation scale")
@@ -518,7 +502,7 @@ def make_splitcifar(seed=0, pc_valid=0.2):
     
     
     
-    
+### Download and set up the PMNIST dataset tasks
 def make_PMNIST(seed=0, pc_valid=0.1):
     
     mnist_train = datasets.MNIST('./data/', train = True, transform=transforms.Compose([transforms.ToTensor(),transforms.Normalize((0.1307,), (0.3081,)),

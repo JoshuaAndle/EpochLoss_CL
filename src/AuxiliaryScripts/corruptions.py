@@ -20,8 +20,6 @@
 
 
 import numpy as np
-from PIL import Image
-import pickle
 
 
 # /////////////// Corruption Helpers ///////////////
@@ -64,7 +62,7 @@ def identity(x):
 
 
 
-def gaussian_noise(x, severity=5):
+def gaussian_noise(x:torch.Tensor, severity:int=5):
     c = [.08, .12, 0.18, 0.26, 0.38][severity - 1]
 
     # x = copy.deepcopy(x) + torch.normal(0, c, size=x.size())
@@ -74,7 +72,7 @@ def gaussian_noise(x, severity=5):
 
 
 
-def impulse_noise(x, severity=4):
+def impulse_noise(x:torch.Tensor, severity:int=4):
     c = [.03, .06, .09, 0.17, 0.27][severity - 1]
     
     x = copy.deepcopy(x).detach().cpu().numpy()
@@ -86,7 +84,7 @@ def impulse_noise(x, severity=4):
 
 
 
-def gaussian_blur(x, severity=2):
+def gaussian_blur(x:torch.Tensor, severity:int=2):
     c = [1, 2, 3, 4, 6][severity - 1]
 
     x = copy.deepcopy(x).detach().cpu().numpy()
@@ -97,7 +95,7 @@ def gaussian_blur(x, severity=2):
 
 
 
-def spatter(x, severity=4):
+def spatter(x:torch.Tensor, severity:int=4):
     c = [(0.65, 0.3, 4, 0.69, 0.6, 0),
          (0.65, 0.3, 3, 0.68, 0.6, 0),
          (0.65, 0.3, 2, 0.68, 0.5, 0),
@@ -125,7 +123,7 @@ def spatter(x, severity=4):
 
 
 
-def saturate(x, severity=5):
+def saturate(x:torch.Tensor, severity:int=5):
     c = [(0.3, 0), (0.1, 0), (2, 0), (5, 0.1), (20, 0.2)][severity - 1]
 
     x = copy.deepcopy(x).detach().cpu().numpy()
@@ -138,7 +136,7 @@ def saturate(x, severity=5):
 
 
 
-def rotate(x, severity=2):
+def rotate(x:torch.Tensor, severity:int=2):
     c = [0.2, 0.4, 0.6, 0.8, 1.][severity-1]
 
     # Randomly switch directions
