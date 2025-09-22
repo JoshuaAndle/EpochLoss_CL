@@ -52,36 +52,35 @@ def early_termination_check(args: argparse.Namespace):
 
     num_classes_by_task = get_numclasses(args.dataset)
 
-    assert args.task_num >= 0 and args.task_num < len(num_classes_by_task), print(f"Task num is {args.task_num}, must in range [0:{len(num_classes_by_task)}]")
+    assert args.task_num >= 0 and args.task_num < len(num_classes_by_task), f"Task num is {args.task_num}, must in range [0:{len(num_classes_by_task)}]"
 
 
     if hasattr(args, "modifier_list"):
-        assert len(args.modifier_list) == len(num_classes_by_task), print(f"Modifier string {args.modifier_string} must have one value for each task in dataset")
+        assert len(args.modifier_list) == len(num_classes_by_task), f"Modifier string {args.modifier_string} must have one value for each task in dataset"
 
-    assert args.train_epochs > 0, print(f"Training epochs must be greater than zero. Value given: {args.train_epochs}")
-    assert args.finetune_epochs >= 0, print(f"Finetuning epochs must have non-negative value. Value given: {args.finetune_epochs}")
-    assert args.eval_interval > 0, print(f"Eval interval must be greater than zero. Value given: {args.eval_interval}")
+    assert args.train_epochs > 0, f"Training epochs must be greater than zero. Value given: {args.train_epochs}"
+    assert args.finetune_epochs >= 0, f"Finetuning epochs must have non-negative value. Value given: {args.finetune_epochs}"
+    assert args.eval_interval > 0, f"Eval interval must be greater than zero. Value given: {args.eval_interval}"
 
-    assert args.batch_size > 0, print(f"Batch size must be greater than zero. Value given: {args.batch_size}")
-    assert args.lr > 0, print(f"Learning rate must be greater than zero. Value given: {args.lr}")
-    assert args.lr_min > 0, print(f"Learning rate minimum must be greater than zero. Value given: {args.lr_min}")
-    assert args.lr_patience > 0, print(f"Learning rate patience must be greater than zero. Value given: {args.lr_patience}")
-    assert args.lr_factor > 0 and args.lr_factor < 1, print(f"Learning rate factor must be between 0 and 1. Value given: {args.lr_factor}")
+    assert args.batch_size > 0, f"Batch size must be greater than zero. Value given: {args.batch_size}"
+    assert args.lr > 0, f"Learning rate must be greater than zero. Value given: {args.lr}"
+    assert args.lr_min > 0, f"Learning rate minimum must be greater than zero. Value given: {args.lr_min}"
+    assert args.lr_patience > 0, f"Learning rate patience must be greater than zero. Value given: {args.lr_patience}"
+    assert args.lr_factor > 0 and args.lr_factor < 1, f"Learning rate factor must be between 0 and 1. Value given: {args.lr_factor}"
+    assert args.prune_perc_per_layer > 0 and args.prune_perc_per_layer < 1, f"Prune percent per layer must be between 0 and 1. Value given: {args.prune_perc_per_layer}"
 
-    assert args.prune_perc_per_layer > 0 and args.prune_perc_per_layer < 1, print(f"Prune percent per layer must be between 0 and 1. Value given: {args.prune_perc_per_layer}")
+    assert args.removal_percentage >= 0.0, f"Removal Percentage must be non-negative. Value given: {args.removal_percentage}"
+    assert args.tau >= 0, f"Tau must be non-negative. Value given: {args.tau}"
 
-    assert args.removal_percentage >= 0.0, print(f"Removal Percentage must be non-negative. Value given: {args.removal_percentage}")
-    assert args.tau >= 0, print(f"Tau must be non-negative. Value given: {args.tau}")
+    assert args.caper_epsilon >= 0.0, f"Caper Epsilon must be non-negative. Value given: {args.caper_epsilon}"
 
-    assert args.caper_epsilon >= 0.0, print(f"Caper Epsilon must be non-negative. Value given: {args.caper_epsilon}")
+    assert args.epoch_loss_epochs >= 0, f"Epoch loss epochs must be non-negative. Value given: {args.epoch_loss_epochs}"
+    assert args.epoch_loss_interval >= 1, f"Epoch loss interval must be greater than zero. Value given: {args.epoch_loss_interval}"
 
-    assert args.epoch_loss_epochs >= 0, print(f"Epoch loss epochs must be non-negative. Value given: {args.epoch_loss_epochs}")
-    assert args.epoch_loss_interval >= 1, print(f"Epoch loss interval must be greater than zero. Value given: {args.epoch_loss_interval}")
-
-    assert args.dropout_factor >= 0.0 and args.dropout_factor < 1, print(f"Dropout factor must be in range [0.0:1.0]. Value given: {args.dropout_factor}")
+    assert args.dropout_factor >= 0.0 and args.dropout_factor < 1, f"Dropout factor must be in range [0.0:1.0]. Value given: {args.dropout_factor}"
 
     if hasattr(args, "eval_tasknum"):
-        assert args.eval_tasknum >= 0 and args.eval_tasknum < len(num_classes_by_task), print(f"Eval task num is {args.eval_tasknum}, must in range [0:{len(num_classes_by_task)}]")
+        assert args.eval_tasknum >= 0 and args.eval_tasknum < len(num_classes_by_task), f"Eval task num is {args.eval_tasknum}, must in range [0:{len(num_classes_by_task)}]"
 
 
 
